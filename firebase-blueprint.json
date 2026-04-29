@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "HTMLFile": {
+      "title": "HTML File",
+      "description": "Hosted HTML file uploaded by a user",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "description": "HTML content"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp of upload"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the uploader"
+        }
+      },
+      "required": ["content", "createdAt", "ownerId"]
+    }
+  },
+  "firestore": {
+    "htmlFiles": {
+      "schema": "HTMLFile",
+      "description": "A collection of hosted HTML files"
+    }
+  }
+}

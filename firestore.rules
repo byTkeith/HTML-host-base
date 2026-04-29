@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidHTMLFile(data) {
+      return data.keys().hasAll(['content', 'createdAt', 'ownerId']) &&
+             data.keys().size() == 3 &&
+             data.content is string && data.content.size() <= 1048576 && // 1MB limit max
+             data.createdAt is number && data.createdAt > 0 &&
+             data.ownerId == request.auth.uid;
+    }
+
+    // Since HTML files can be accessed by anyone, we can allow public read.
+    // However, they should only be readable if we know the ID, but Firestore allows reading the doc if known.
+    // Does the user want ANYONE who gets the link to be able to read? Yes.
+    // So get is public. We can allow public `get`.
+    match /htmlFiles/{fileId} {
+      // Allow public get
+      allow get: if isValidId(fileId);
+      
+      // Allow anyone to query their own files
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      // Allow creation
+      allow create: if isSignedIn() &&
+                    isValidId(fileId) && 
+                    isValidHTMLFile(incoming());
+                    
+      // Allow deletion only by owner
+      allow delete: if isSignedIn() && 
+                    isValidId(fileId) && 
+                    existing().ownerId == request.auth.uid;
+                    
+      // Disallow updates or specify updates
+      allow update: if false; 
+    }
+  }
+}
