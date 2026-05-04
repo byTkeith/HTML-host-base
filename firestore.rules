@@ -14,17 +14,21 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
 
     function isValidHTMLFile(data) {
-      return data.keys().hasAll(['content', 'createdAt', 'ownerId']) &&
-             data.keys().size() == 3 &&
-             data.content is string && data.content.size() <= 1048576 && // 1MB limit max
+      // Allow classical string content (max 800KB chunked for safety)
+      let hasContent = data.keys().hasAll(['content', 'createdAt', 'ownerId']) &&
+                       data.keys().size() == 3 &&
+                       data.content is string && data.content.size() <= 900000;
+                       
+      // Allow chunked uploads
+      let hasChunks = data.keys().hasAll(['numChunks', 'createdAt', 'ownerId']) &&
+                      data.keys().size() == 3 &&
+                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 10; // Up to ~8MB
+                      
+      return (hasContent || hasChunks) &&
              data.createdAt is number && data.createdAt > 0 &&
              data.ownerId == request.auth.uid;
     }
 
-    // Since HTML files can be accessed by anyone, we can allow public read.
-    // However, they should only be readable if we know the ID, but Firestore allows reading the doc if known.
-    // Does the user want ANYONE who gets the link to be able to read? Yes.
-    // So get is public. We can allow public `get`.
     match /htmlFiles/{fileId} {
       // Allow public get
       allow get: if isValidId(fileId);
@@ -42,8 +46,27 @@ service cloud.firestore {
                     isValidId(fileId) && 
                     existing().ownerId == request.auth.uid;
                     
-      // Disallow updates or specify updates
+      // Disallow updates
       allow update: if false; 
+      
+      match /chunks/{chunkId} {
+        allow get: if isValidId(fileId) && isValidId(chunkId);
+        allow list: if false; // No need to list chunks directly from client
+        
+        // We use getAfter to ensure the main file is created in the same batch with correct owner
+        allow create: if isSignedIn() &&
+                      isValidId(chunkId) &&
+                      incoming().keys().hasAll(['content']) &&
+                      incoming().keys().size() == 1 &&
+                      incoming().content is string && incoming().content.size() <= 900000 &&
+                      getAfter(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid;
+                      
+        allow delete: if isSignedIn() &&
+                      isValidId(chunkId) &&
+                      get(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid;
+                      
+        allow update: if false;
+      }
     }
   }
 }

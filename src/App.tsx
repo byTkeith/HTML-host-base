@@ -14,7 +14,7 @@ import {
   doc, 
   setDoc, 
   deleteDoc,
-  serverTimestamp
+  writeBatch
 } from 'firebase/firestore';
 import { FileCode, Upload, Trash2, ExternalLink, LogIn, LogOut, Copy, CheckCircle2 } from 'lucide-react';
 import { auth, db } from './lib/firebase';
@@ -22,7 +22,8 @@ import { handleFirestoreError, OperationType } from './lib/firestoreErrorHandler
 
 interface HTMLFile {
   id: string;
-  content: string;
+  content?: string;
+  numChunks?: number;
   createdAt: number;
   ownerId: string;
 }
@@ -66,6 +67,7 @@ export default function App() {
         htmlFiles.push({
           id: docSnap.id,
           content: data.content,
+          numChunks: data.numChunks,
           createdAt: data.createdAt,
           ownerId: data.ownerId,
         } as HTMLFile);
@@ -106,9 +108,10 @@ export default function App() {
       return;
     }
     
-    // Check file size (Firestore limit is 1MB string size, let's limit file to 500kb to be safe)
-    if (file.size > 500 * 1024) {
-      alert('File size exceeds the 500KB limit for secure hosting.');
+    // Increased file size limit up to ~8MB (8000KB) and chunked to bypass 1MB firestore limit.
+    const MAX_FILE_SIZE = 8000 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      alert('File size exceeds the 8MB limit for secure hosting.');
       return;
     }
 
@@ -116,18 +119,41 @@ export default function App() {
     reader.onload = async (event) => {
       try {
         setIsUploading(true);
-        const content = event.target?.result as string;
+        const contentStr = event.target?.result as string;
         
         if (!user) throw new Error("Must be logged in");
         
         const fileId = generateId();
+        const batch = writeBatch(db);
         const fileRef = doc(db, 'htmlFiles', fileId);
         
-        await setDoc(fileRef, {
-          content,
-          createdAt: Date.now(),
-          ownerId: user.uid
-        });
+        // 800KB max size for each chunk to be well inside 1MB Firestore limit
+        const MAX_CHUNK_SIZE = 800 * 1024; 
+
+        if (contentStr.length <= MAX_CHUNK_SIZE) {
+          batch.set(fileRef, {
+            content: contentStr,
+            createdAt: Date.now(),
+            ownerId: user.uid
+          });
+        } else {
+          const numChunks = Math.ceil(contentStr.length / MAX_CHUNK_SIZE);
+          batch.set(fileRef, {
+            numChunks,
+            createdAt: Date.now(),
+            ownerId: user.uid
+          });
+
+          for (let i = 0; i < numChunks; i++) {
+            const chunkRef = doc(db, `htmlFiles/${fileId}/chunks/${i}`);
+            const chunkContent = contentStr.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE);
+            batch.set(chunkRef, {
+              content: chunkContent
+            });
+          }
+        }
+        
+        await batch.commit();
         
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'htmlFiles');
@@ -141,10 +167,19 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const deleteFile = async (id: string) => {
+  const deleteFile = async (id: string, numChunks?: number) => {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
-      await deleteDoc(doc(db, 'htmlFiles', id));
+      const batch = writeBatch(db);
+      const fileRef = doc(db, 'htmlFiles', id);
+      
+      if (numChunks) {
+        for (let i = 0; i < numChunks; i++) {
+          batch.delete(doc(db, `htmlFiles/${id}/chunks/${i}`));
+        }
+      }
+      batch.delete(fileRef);
+      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `htmlFiles/${id}`);
     }
@@ -248,7 +283,7 @@ export default function App() {
                 </div>
                 <div className="text-center">
                   <p className="font-semibold">{isUploading ? 'Uploading...' : 'Click to upload or drag and drop'}</p>
-                  <p className="text-xs text-slate-400 mt-1">HTML files only (max 500KB)</p>
+                  <p className="text-xs text-slate-400 mt-1">HTML files only (max 8MB)</p>
                 </div>
               </label>
             </div>
@@ -284,7 +319,7 @@ export default function App() {
                       </div>
                       <div className="flex items-center gap-3 self-end sm:self-auto">
                         <button 
-                          onClick={() => deleteFile(file.id)}
+                          onClick={() => deleteFile(file.id, file.numChunks)}
                           className="p-2 text-slate-400 hover:text-red-500 transition-colors"
                           title="Delete file"
                         >

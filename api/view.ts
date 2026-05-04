@@ -26,14 +26,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const data = await response.json();
     
-    if (data && data.fields && data.fields.content && data.fields.content.stringValue) {
-      const htmlContent = data.fields.content.stringValue;
-      // Vercel serverless functions require explicit headers
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).send(htmlContent);
-    } else {
-      return res.status(404).send("File content is missing or invalid");
+    if (data && data.fields) {
+      if (data.fields.content && data.fields.content.stringValue) {
+        const htmlContent = data.fields.content.stringValue;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(htmlContent);
+      } else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
+        const numChunks = parseInt(data.fields.numChunks.integerValue, 10);
+        let fullHtml = "";
+        
+        for (let i = 0; i < numChunks; i++) {
+          const chunkUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}/chunks/${i}`;
+          const chunkRes = await fetch(chunkUrl);
+          if (chunkRes.ok) {
+            const chunkData = await chunkRes.json();
+            if (chunkData.fields && chunkData.fields.content) {
+              fullHtml += chunkData.fields.content.stringValue;
+            }
+          }
+        }
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(fullHtml);
+      }
     }
+    
+    return res.status(404).send("File content is missing or invalid");
     
   } catch (error) {
     console.error(error);
