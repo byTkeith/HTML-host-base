@@ -111,7 +111,7 @@ export default function App() {
     // Increased file size limit up to ~15MB (15000KB) and chunked to bypass 1MB firestore limit.
     const MAX_FILE_SIZE = 15000 * 1024;
     if (file.size > MAX_FILE_SIZE) {
-      alert('File size exceeds the 10MB limit for secure hosting.');
+      alert('File size exceeds the 15MB limit for secure hosting.');
       return;
     }
 
@@ -128,7 +128,7 @@ export default function App() {
         const fileRef = doc(db, 'htmlFiles', fileId);
         
         // 15000KB max size for each chunk to be well inside 1MB Firestore limit
-        const MAX_CHUNK_SIZE = 15000 * 1024; 
+        const MAX_CHUNK_SIZE = 700 * 1024; 
 
         if (contentStr.length <= MAX_CHUNK_SIZE) {
           batch.set(fileRef, {
