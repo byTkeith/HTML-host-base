@@ -45,8 +45,12 @@ const MAX_BATCH_OPS = 400; // safety margin under 500 writes
 // Overall upload size limit — independent of MAX_CHUNK_SIZE.
 const MAX_FILE_SIZE = 15000 * 1024; // ~15MB
 
+// Native browser API for UTF-8 byte length — avoids Blob(), which some bundler
+// configs (Node polyfill plugins, aliasing, etc.) can reroute through a CJS
+// 'buffer' shim that calls require() and crashes at runtime in the browser.
+const textEncoder = new TextEncoder();
 function byteSize(str: string) {
-  return new Blob([str]).size;
+  return textEncoder.encode(str).length;
 }
 
 export default function App() {
