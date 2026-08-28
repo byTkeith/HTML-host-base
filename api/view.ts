@@ -5,15 +5,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const id = req.query.id as string;
     
-    if (!id || !/^[a-zA-Z0-9_\\-]+$/.test(id)) {
+    if (!id || !/^[a-zA-Z0-9_\-]+$/.test(id)) {
       return res.status(400).send("Invalid ID");
     }
     
     const { projectId, firestoreDatabaseId } = firebaseConfig;
     
-    // We fetch directly from the Firestore REST API to avoid bundling issues with the full SDK in serverless
+    // Fetch parent document from Firestore REST API
     const apiUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}`;
-    
     const response = await fetch(apiUrl);
     
     if (!response.ok) {
@@ -27,24 +26,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const data = await response.json();
     
     if (data && data.fields) {
+      // 1. Single chunk file
       if (data.fields.content && data.fields.content.stringValue) {
-        const htmlContent = data.fields.content.stringValue;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).send(htmlContent);
-      } else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
+        return res.status(200).send(data.fields.content.stringValue);
+      } 
+      
+      // 2. Multi-chunk file (parallel fetch for fast response)
+      else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
         const numChunks = parseInt(data.fields.numChunks.integerValue, 10);
-        let fullHtml = "";
         
-        for (let i = 0; i < numChunks; i++) {
+        const chunkPromises = Array.from({ length: numChunks }, async (_, i) => {
           const chunkUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}/chunks/${i}`;
           const chunkRes = await fetch(chunkUrl);
-          if (chunkRes.ok) {
-            const chunkData = await chunkRes.json();
-            if (chunkData.fields && chunkData.fields.content) {
-              fullHtml += chunkData.fields.content.stringValue;
-            }
+          if (!chunkRes.ok) {
+            throw new Error(`Failed to load chunk ${i}`);
           }
-        }
+          const chunkData = await chunkRes.json();
+          return chunkData.fields?.content?.stringValue || "";
+        });
+
+        const chunkStrings = await Promise.all(chunkPromises);
+        const fullHtml = chunkStrings.join("");
+
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).send(fullHtml);
       }
