@@ -128,7 +128,7 @@ export default function App() {
         const fileRef = doc(db, 'htmlFiles', fileId);
         
         // 15000KB max size for each chunk to be well inside 1MB Firestore limit
-        const MAX_CHUNK_SIZE = 700 * 1024; 
+        const MAX_CHUNK_SIZE = 1000 * 1024; 
 
         if (contentStr.length <= MAX_CHUNK_SIZE) {
           batch.set(fileRef, {
