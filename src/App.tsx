@@ -32,6 +32,23 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
 }
 
+// Firestore's hard per-document limit is 1 MiB (1,048,576 bytes), including field overhead.
+// Keep chunks well under that, measured in actual UTF-8 bytes (not JS string .length,
+// which counts UTF-16 code units and can undercount multi-byte characters).
+const MAX_CHUNK_SIZE = 700 * 1024; // 700KB per chunk
+
+// Firestore's writeBatch has a separate hard cap: 10 MiB total payload AND 500 writes
+// per batch.commit(). Stay safely under both so a single large file doesn't blow the batch.
+const MAX_BATCH_BYTES = 8 * 1024 * 1024; // 8MB per batch (safety margin under 10MiB)
+const MAX_BATCH_OPS = 400; // safety margin under 500 writes
+
+// Overall upload size limit — independent of MAX_CHUNK_SIZE.
+const MAX_FILE_SIZE = 15000 * 1024; // ~15MB
+
+function byteSize(str: string) {
+  return new Blob([str]).size;
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,8 +125,6 @@ export default function App() {
       return;
     }
     
-    // Increased file size limit up to ~15MB (15000KB) and chunked to bypass 1MB firestore limit.
-    const MAX_FILE_SIZE = 15000 * 1024;
     if (file.size > MAX_FILE_SIZE) {
       alert('File size exceeds the 15MB limit for secure hosting.');
       return;
@@ -124,55 +139,67 @@ export default function App() {
         if (!user) throw new Error("Must be logged in");
         
         const fileId = generateId();
-        const batch = writeBatch(db);
         const fileRef = doc(db, 'htmlFiles', fileId);
-        
-        // 15000KB max size for each chunk to be well inside 1MB Firestore limit
-        const MAX_CHUNK_SIZE = 700 * 1024; 
-        const MAX_BATCH_BYTES = 8 * 1024 * 1024; // stay safely under Firestore's 10MiB batch limit
+        const contentBytes = byteSize(contentStr);
 
-        const fileId = generateId();
-        const fileRef = doc(db, 'htmlFiles', fileId);
-        
-        if (contentStr.length <= MAX_CHUNK_SIZE) {
+        if (contentBytes <= MAX_CHUNK_SIZE) {
+          // Small file: single document write
           await setDoc(fileRef, {
             content: contentStr,
             createdAt: Date.now(),
             ownerId: user.uid
           });
         } else {
-          const numChunks = Math.ceil(contentStr.length / MAX_CHUNK_SIZE);
-        
-          // Write the parent doc first
+          // Large file: split into chunk documents, sized by actual byte length
+          // so multi-byte characters (emoji, non-ASCII text) can't push a chunk over 1MiB.
+          const chunks: string[] = [];
+          let cursor = 0;
+          while (cursor < contentStr.length) {
+            // Walk forward char-by-char in a rough slice, then trim to fit the byte budget.
+            // Start with an estimate based on character count, then adjust for actual bytes.
+            let end = Math.min(cursor + MAX_CHUNK_SIZE, contentStr.length);
+            let slice = contentStr.slice(cursor, end);
+            while (byteSize(slice) > MAX_CHUNK_SIZE && end > cursor) {
+              end -= 64; // back off in small steps until it fits under the byte cap
+              slice = contentStr.slice(cursor, end);
+            }
+            chunks.push(slice);
+            cursor = end;
+          }
+
+          const numChunks = chunks.length;
+
+          // Write the parent doc first so a partial chunk-write failure doesn't
+          // leave numChunks pointing at nothing.
           await setDoc(fileRef, {
             numChunks,
             createdAt: Date.now(),
             ownerId: user.uid
           });
-        
-          // Write chunks in multiple batches, capped by total byte size per batch
+
+          // Write chunks across multiple batches, capped by both byte size and op count,
+          // since a single writeBatch() is limited to ~10MiB / 500 writes.
           let batch = writeBatch(db);
           let batchBytes = 0;
           let batchOps = 0;
-        
+
           for (let i = 0; i < numChunks; i++) {
-            const chunkContent = contentStr.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE);
-            const chunkBytes = new Blob([chunkContent]).size; // actual UTF-8 byte size, not JS .length
-        
-            // Firestore batches also cap at 500 writes — check both limits
-            if (batchBytes + chunkBytes > MAX_BATCH_BYTES || batchOps >= 400) {
+            const chunkContent = chunks[i];
+            const chunkBytes = byteSize(chunkContent);
+
+            if (batchOps > 0 && (batchBytes + chunkBytes > MAX_BATCH_BYTES || batchOps >= MAX_BATCH_OPS)) {
               await batch.commit();
               batch = writeBatch(db);
               batchBytes = 0;
               batchOps = 0;
             }
-        
+
             const chunkRef = doc(db, `htmlFiles/${fileId}/chunks/${i}`);
             batch.set(chunkRef, { content: chunkContent });
             batchBytes += chunkBytes;
             batchOps++;
           }
-        
+
           if (batchOps > 0) {
             await batch.commit();
           }
@@ -193,16 +220,34 @@ export default function App() {
   const deleteFile = async (id: string, numChunks?: number) => {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
-      const batch = writeBatch(db);
+      // Deletes can hit the same 500-write batch cap as uploads for very large
+      // chunked files, so split deletes across batches too.
+      const CHUNK_DELETE_BATCH_SIZE = 400;
       const fileRef = doc(db, 'htmlFiles', id);
-      
-      if (numChunks) {
+
+      if (numChunks && numChunks > 0) {
+        let batch = writeBatch(db);
+        let opsInBatch = 0;
+
         for (let i = 0; i < numChunks; i++) {
           batch.delete(doc(db, `htmlFiles/${id}/chunks/${i}`));
+          opsInBatch++;
+
+          if (opsInBatch >= CHUNK_DELETE_BATCH_SIZE) {
+            await batch.commit();
+            batch = writeBatch(db);
+            opsInBatch = 0;
+          }
         }
+
+        if (opsInBatch > 0) {
+          await batch.commit();
+        }
+
+        await deleteDoc(fileRef);
+      } else {
+        await deleteDoc(fileRef);
       }
-      batch.delete(fileRef);
-      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `htmlFiles/${id}`);
     }
