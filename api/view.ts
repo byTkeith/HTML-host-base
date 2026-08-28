@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import zlib from 'zlib';
 import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -11,7 +12,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const { projectId, firestoreDatabaseId } = firebaseConfig;
     
-    // Fetch parent document from Firestore REST API
     const apiUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}`;
     const response = await fetch(apiUrl);
     
@@ -26,16 +26,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const data = await response.json();
     
     if (data && data.fields) {
-      // 1. Single chunk file
+      let rawContent = "";
+
       if (data.fields.content && data.fields.content.stringValue) {
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).send(data.fields.content.stringValue);
-      } 
-      
-      // 2. Multi-chunk file (parallel fetch for fast response)
-      else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
+        rawContent = data.fields.content.stringValue;
+      } else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
         const numChunks = parseInt(data.fields.numChunks.integerValue, 10);
         
+        // Concurrent fast chunk fetching
         const chunkPromises = Array.from({ length: numChunks }, async (_, i) => {
           const chunkUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}/chunks/${i}`;
           const chunkRes = await fetch(chunkUrl);
@@ -47,10 +45,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
         const chunkStrings = await Promise.all(chunkPromises);
-        const fullHtml = chunkStrings.join("");
+        rawContent = chunkStrings.join("");
+      }
+
+      if (rawContent) {
+        // Automatically detect and decompress gzip payloads
+        try {
+          const buf = Buffer.from(rawContent, 'base64');
+          if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+            const decompressed = zlib.gunzipSync(buf).toString('utf-8');
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.status(200).send(decompressed);
+          }
+        } catch {
+          // If not gzip base64, serve as regular plain text
+        }
 
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).send(fullHtml);
+        return res.status(200).send(rawContent);
       }
     }
     
