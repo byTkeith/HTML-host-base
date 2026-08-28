@@ -30,7 +30,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   // Use a dynamic import or lazy binding if auth is tightly coupled, 
   // but here we just need currentUser info globally. We'll pass it or access it directly.
   //const firebaseAuth = require('./firebase').auth;
-  const currentUser = firebaseAuth.currentUser;
+  //const currentUser = firebaseAuth.currentUser;
+  const currentUser = auth.currentUser;
   
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
