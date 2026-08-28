@@ -108,8 +108,8 @@ export default function App() {
       return;
     }
     
-    // Increased file size limit up to ~10MB (10000KB) and chunked to bypass 1MB firestore limit.
-    const MAX_FILE_SIZE = 10000 * 1024;
+    // Increased file size limit up to ~15MB (15000KB) and chunked to bypass 1MB firestore limit.
+    const MAX_FILE_SIZE = 15000 * 1024;
     if (file.size > MAX_FILE_SIZE) {
       alert('File size exceeds the 10MB limit for secure hosting.');
       return;
@@ -127,8 +127,8 @@ export default function App() {
         const batch = writeBatch(db);
         const fileRef = doc(db, 'htmlFiles', fileId);
         
-        // 1000KB max size for each chunk to be well inside 1MB Firestore limit
-        const MAX_CHUNK_SIZE = 1000 * 1024; 
+        // 15000KB max size for each chunk to be well inside 1MB Firestore limit
+        const MAX_CHUNK_SIZE = 15000 * 1024; 
 
         if (contentStr.length <= MAX_CHUNK_SIZE) {
           batch.set(fileRef, {
@@ -283,7 +283,7 @@ export default function App() {
                 </div>
                 <div className="text-center">
                   <p className="font-semibold">{isUploading ? 'Uploading...' : 'Click to upload or drag and drop'}</p>
-                  <p className="text-xs text-slate-400 mt-1">HTML files only (max 10MB)</p>
+                  <p className="text-xs text-slate-400 mt-1">HTML files only (max 15MB)</p>
                 </div>
               </label>
             </div>
