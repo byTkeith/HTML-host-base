@@ -145,11 +145,10 @@ export default function App() {
         const fileId = generateId();
         const fileRef = doc(db, 'htmlFiles', fileId);
         const contentBytes = byteSize(contentStr);
-        console.log('numChunks for this upload:', numChunks);
-
+        
         if (contentBytes <= MAX_CHUNK_SIZE) {
           // Small file: single document write
-          console.log('numChunks for this upload:', numChunks);
+          
           await setDoc(fileRef, {
             content: contentStr,
             createdAt: Date.now(),
@@ -177,6 +176,7 @@ export default function App() {
 
           // Write the parent doc first so a partial chunk-write failure doesn't
           // leave numChunks pointing at nothing.
+          console.log('numChunks for this upload:', numChunks);
           await setDoc(fileRef, {
             numChunks,
             createdAt: Date.now(),
