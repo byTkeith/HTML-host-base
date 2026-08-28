@@ -22,7 +22,7 @@ service cloud.firestore {
       // Allow chunked uploads
       let hasChunks = data.keys().hasAll(['numChunks', 'createdAt', 'ownerId']) &&
                       data.keys().size() == 3 &&
-                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 10; // Up to ~8MB
+                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 25;
                       
       return (hasContent || hasChunks) &&
              data.createdAt is number && data.createdAt > 0 &&
