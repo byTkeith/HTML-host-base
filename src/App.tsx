@@ -35,7 +35,7 @@ function generateId() {
 // Firestore's hard per-document limit is 1 MiB (1,048,576 bytes), including field overhead.
 // Keep chunks well under that, measured in actual UTF-8 bytes (not JS string .length,
 // which counts UTF-16 code units and can undercount multi-byte characters).
-const MAX_CHUNK_SIZE = 700 * 1024; // 700KB per chunk
+const MAX_CHUNK_SIZE = 800 * 1024; // 800KB per chunk
 
 // Firestore's writeBatch has a separate hard cap: 10 MiB total payload AND 500 writes
 // per batch.commit(). Stay safely under both so a single large file doesn't blow the batch.
