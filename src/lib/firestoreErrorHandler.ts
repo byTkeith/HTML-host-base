@@ -1,3 +1,5 @@
+import { auth } from './firebase';
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -27,7 +29,7 @@ interface FirestoreErrorInfo {
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
   // Use a dynamic import or lazy binding if auth is tightly coupled, 
   // but here we just need currentUser info globally. We'll pass it or access it directly.
-  const firebaseAuth = require('./firebase').auth;
+  //const firebaseAuth = require('./firebase').auth;
   const currentUser = firebaseAuth.currentUser;
   
   const errInfo: FirestoreErrorInfo = {
