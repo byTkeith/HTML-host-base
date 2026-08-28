@@ -18,12 +18,12 @@ service cloud.firestore {
       let hasContent = data.keys().hasAll(['content', 'createdAt', 'ownerId']) &&
                        data.keys().size() == 3 &&
                        data.content is string && data.content.size() <= 900000;
-                       
-      // Allow chunked uploads
+            
+      // Allow chunked uploads (increased limit to 50 chunks for 15MB+)
       let hasChunks = data.keys().hasAll(['numChunks', 'createdAt', 'ownerId']) &&
                       data.keys().size() == 3 &&
-                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 25;
-                      
+                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 50;
+            
       return (hasContent || hasChunks) &&
              data.createdAt is number && data.createdAt > 0 &&
              data.ownerId == request.auth.uid;
@@ -40,31 +40,35 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                     isValidId(fileId) && 
                     isValidHTMLFile(incoming());
-                    
+           
       // Allow deletion only by owner
       allow delete: if isSignedIn() && 
                     isValidId(fileId) && 
                     existing().ownerId == request.auth.uid;
-                    
+           
       // Disallow updates
       allow update: if false; 
-      
+    
       match /chunks/{chunkId} {
         allow get: if isValidId(fileId) && isValidId(chunkId);
-        allow list: if false; // No need to list chunks directly from client
+        allow list: if false;
         
-        // We use getAfter to ensure the main file is created in the same batch with correct owner
+        // Allow create if parent doc is owned by user (supports both prior setDoc and same-batch write)
         allow create: if isSignedIn() &&
                       isValidId(chunkId) &&
                       incoming().keys().hasAll(['content']) &&
                       incoming().keys().size() == 1 &&
                       incoming().content is string && incoming().content.size() <= 900000 &&
-                      getAfter(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid;
-                      
+                      (
+                        (exists(/databases/$(database)/documents/htmlFiles/$(fileId)) &&
+                         get(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid) ||
+                        getAfter(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid
+                      );
+            
         allow delete: if isSignedIn() &&
                       isValidId(chunkId) &&
                       get(/databases/$(database)/documents/htmlFiles/$(fileId)).data.ownerId == request.auth.uid;
-                      
+            
         allow update: if false;
       }
     }
