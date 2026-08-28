@@ -129,31 +129,54 @@ export default function App() {
         
         // 15000KB max size for each chunk to be well inside 1MB Firestore limit
         const MAX_CHUNK_SIZE = 700 * 1024; 
+        const MAX_BATCH_BYTES = 8 * 1024 * 1024; // stay safely under Firestore's 10MiB batch limit
 
+        const fileId = generateId();
+        const fileRef = doc(db, 'htmlFiles', fileId);
+        
         if (contentStr.length <= MAX_CHUNK_SIZE) {
-          batch.set(fileRef, {
+          await setDoc(fileRef, {
             content: contentStr,
             createdAt: Date.now(),
             ownerId: user.uid
           });
         } else {
           const numChunks = Math.ceil(contentStr.length / MAX_CHUNK_SIZE);
-          batch.set(fileRef, {
+        
+          // Write the parent doc first
+          await setDoc(fileRef, {
             numChunks,
             createdAt: Date.now(),
             ownerId: user.uid
           });
-
+        
+          // Write chunks in multiple batches, capped by total byte size per batch
+          let batch = writeBatch(db);
+          let batchBytes = 0;
+          let batchOps = 0;
+        
           for (let i = 0; i < numChunks; i++) {
-            const chunkRef = doc(db, `htmlFiles/${fileId}/chunks/${i}`);
             const chunkContent = contentStr.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE);
-            batch.set(chunkRef, {
-              content: chunkContent
-            });
+            const chunkBytes = new Blob([chunkContent]).size; // actual UTF-8 byte size, not JS .length
+        
+            // Firestore batches also cap at 500 writes — check both limits
+            if (batchBytes + chunkBytes > MAX_BATCH_BYTES || batchOps >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              batchBytes = 0;
+              batchOps = 0;
+            }
+        
+            const chunkRef = doc(db, `htmlFiles/${fileId}/chunks/${i}`);
+            batch.set(chunkRef, { content: chunkContent });
+            batchBytes += chunkBytes;
+            batchOps++;
+          }
+        
+          if (batchOps > 0) {
+            await batch.commit();
           }
         }
-        
-        await batch.commit();
         
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'htmlFiles');
