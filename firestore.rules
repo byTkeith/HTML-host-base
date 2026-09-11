@@ -14,15 +14,14 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
 
     function isValidHTMLFile(data) {
-      // Allow classical string content (max 800KB chunked for safety)
       let hasContent = data.keys().hasAll(['content', 'createdAt', 'ownerId']) &&
                        data.keys().size() == 3 &&
                        data.content is string && data.content.size() <= 900000;
             
-      // Allow chunked uploads (increased limit to 50 chunks for 15MB+)
+      // INCREASED FROM 25 TO 100 CHUNKS (supports up to 70MB)
       let hasChunks = data.keys().hasAll(['numChunks', 'createdAt', 'ownerId']) &&
                       data.keys().size() == 3 &&
-                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 70;
+                      data.numChunks is number && data.numChunks > 0 && data.numChunks <= 100;
             
       return (hasContent || hasChunks) &&
              data.createdAt is number && data.createdAt > 0 &&
@@ -30,30 +29,17 @@ service cloud.firestore {
     }
 
     match /htmlFiles/{fileId} {
-      // Allow public get
       allow get: if isValidId(fileId);
-      
-      // Allow anyone to query their own files
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      
-      // Allow creation
-      allow create: if isSignedIn() &&
-                    isValidId(fileId) && 
-                    isValidHTMLFile(incoming());
-           
-      // Allow deletion only by owner
-      allow delete: if isSignedIn() && 
-                    isValidId(fileId) && 
-                    existing().ownerId == request.auth.uid;
-           
-      // Disallow updates
+      allow create: if isSignedIn() && isValidId(fileId) && isValidHTMLFile(incoming());
+      allow delete: if isSignedIn() && isValidId(fileId) && existing().ownerId == request.auth.uid;
       allow update: if false; 
     
       match /chunks/{chunkId} {
         allow get: if isValidId(fileId) && isValidId(chunkId);
         allow list: if false;
         
-        // Allow create if parent doc is owned by user (supports both prior setDoc and same-batch write)
+        // Allows chunks to be written in separate batches by checking existing()
         allow create: if isSignedIn() &&
                       isValidId(chunkId) &&
                       incoming().keys().hasAll(['content']) &&
