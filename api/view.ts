@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import zlib from 'zlib';
 import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -33,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else if (data.fields.numChunks && data.fields.numChunks.integerValue) {
         const numChunks = parseInt(data.fields.numChunks.integerValue, 10);
         
-        // Concurrent fast chunk fetching
+        // Fast concurrent chunk retrieval
         const chunkPromises = Array.from({ length: numChunks }, async (_, i) => {
           const chunkUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${firestoreDatabaseId}/documents/htmlFiles/${id}/chunks/${i}`;
           const chunkRes = await fetch(chunkUrl);
@@ -49,16 +48,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (rawContent) {
-        // Automatically detect and decompress gzip payloads
+        // If content is base64 gzip, stream it directly with Content-Encoding: gzip
         try {
           const buf = Buffer.from(rawContent, 'base64');
           if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
-            const decompressed = zlib.gunzipSync(buf).toString('utf-8');
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            return res.status(200).send(decompressed);
+            res.setHeader('Content-Encoding', 'gzip');
+            return res.status(200).send(buf);
           }
         } catch {
-          // If not gzip base64, serve as regular plain text
+          // Fallback to plain text
         }
 
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
