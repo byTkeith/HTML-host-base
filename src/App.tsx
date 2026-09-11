@@ -32,9 +32,10 @@ function generateId() {
  return Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
 }
 
-// 700KB per chunk ensures it fits under Firestore's 900KB rule limit
+// 700KB per chunk ensures it stays safely under Firestore's 900KB rule limit
 const MAX_CHUNK_SIZE = 700 * 1024;
-const MAX_FILE_SIZE = 15000 * 1024; // 15MB
+// Increased to 30,000 KB (~30MB)
+const MAX_FILE_SIZE = 30000 * 1024;
 
 const textEncoder = new TextEncoder();
 function byteSize(str: string) {
@@ -133,7 +134,7 @@ export default function App() {
   }
    
   if (file.size > MAX_FILE_SIZE) {
-   alert('File size exceeds the 15MB limit.');
+   alert('File size exceeds the 30MB limit.');
    return;
   }
 
@@ -157,7 +158,7 @@ export default function App() {
       ownerId: user.uid
      });
     } else {
-     // Large file (up to 15MB): Gzip compress & chunk into single atomic batch
+     // Large file (up to 30MB): Gzip compress & chunk into atomic batch
      const compressedBase64 = await compressToBase64(contentStr);
      
      const chunks: string[] = [];
@@ -170,8 +171,7 @@ export default function App() {
 
      const numChunks = chunks.length;
 
-     // Write parent document AND chunks together in the SAME batch
-     // to satisfy the getAfter() rule check
+     // Write parent document and all chunks in ONE batch
      const batch = writeBatch(db);
 
      batch.set(fileRef, {
@@ -318,7 +318,7 @@ export default function App() {
         </div>
         <div className="text-center">
          <p className="font-semibold">{isUploading ? 'Uploading...' : 'Click to upload or drag and drop'}</p>
-         <p className="text-xs text-slate-400 mt-1">HTML files only (max 15MB)</p>
+         <p className="text-xs text-slate-400 mt-1">HTML files only (max 30MB)</p>
         </div>
        </label>
       </div>
